@@ -1,6 +1,6 @@
 package com.livetv.app
 
-data class Channel(val name: String, val url: String)
+data class Channel(val name: String, val url: String, val logo: String = "")
 data class Item(val label: String, val key: String)
 
 object Data {
