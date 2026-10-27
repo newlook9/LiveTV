@@ -19,10 +19,21 @@ class Store(private val ctx: Context) {
         sp.edit().putInt(k, v).apply()
     }
 
-    fun favorites(): MutableList<Channel> {
+    private fun toJson(list: List<Channel>): JSONArray {
+        val arr = JSONArray()
+        for (c in list) {
+            val o = JSONObject()
+            o.put("n", c.name)
+            o.put("u", c.url)
+            arr.put(o)
+        }
+        return arr
+    }
+
+    fun getList(key: String): MutableList<Channel> {
         val out = ArrayList<Channel>()
         try {
-            val arr = JSONArray(getString("fav", "[]"))
+            val arr = JSONArray(getString(key, "[]"))
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 out.add(Channel(o.getString("n"), o.getString("u")))
@@ -32,15 +43,38 @@ class Store(private val ctx: Context) {
         return out
     }
 
-    fun saveFavorites(list: List<Channel>) {
+    fun saveList(key: String, list: List<Channel>) {
+        putString(key, toJson(list).toString())
+    }
+
+    fun getPlaylists(): MutableList<Playlist> {
+        val out = ArrayList<Playlist>()
+        try {
+            val arr = JSONArray(getString("playlists", "[]"))
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val items = ArrayList<Channel>()
+                val ia = o.getJSONArray("items")
+                for (j in 0 until ia.length()) {
+                    val c = ia.getJSONObject(j)
+                    items.add(Channel(c.getString("n"), c.getString("u")))
+                }
+                out.add(Playlist(o.getString("name"), items))
+            }
+        } catch (e: Exception) {
+        }
+        return out
+    }
+
+    fun savePlaylists(list: List<Playlist>) {
         val arr = JSONArray()
-        for (c in list) {
+        for (p in list) {
             val o = JSONObject()
-            o.put("n", c.name)
-            o.put("u", c.url)
+            o.put("name", p.name)
+            o.put("items", toJson(p.items))
             arr.put(o)
         }
-        putString("fav", arr.toString())
+        putString("playlists", arr.toString())
     }
 
     private fun cacheFile(key: String): File =
@@ -67,7 +101,7 @@ class Store(private val ctx: Context) {
             val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 15000
             c.readTimeout = 30000
-            c.setRequestProperty("User-Agent", "Mozilla/5.0")
+            c.setRequestProperty("User-Agent", "LiveTV/1.0 (Android)")
             if (c.responseCode != 200) null
             else c.inputStream.bufferedReader().use { it.readText() }
         } catch (e: Exception) {
@@ -87,6 +121,21 @@ fun parseM3u(text: String): List<Channel> {
             out.add(Channel(name, line))
             name = null
         }
+    }
+    return out
+}
+
+fun parseRadio(text: String): List<Channel> {
+    val out = ArrayList<Channel>()
+    try {
+        val arr = JSONArray(text)
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val n = o.optString("name").trim()
+            val u = o.optString("url_resolved").trim()
+            if (n.isNotEmpty() && u.isNotEmpty()) out.add(Channel(n, u))
+        }
+    } catch (e: Exception) {
     }
     return out
 }
