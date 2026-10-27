@@ -25,6 +25,7 @@ class Store(private val ctx: Context) {
             val o = JSONObject()
             o.put("n", c.name)
             o.put("u", c.url)
+            o.put("l", c.logo)
             arr.put(o)
         }
         return arr
@@ -36,7 +37,7 @@ class Store(private val ctx: Context) {
             val arr = JSONArray(getString(key, "[]"))
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                out.add(Channel(o.getString("n"), o.getString("u")))
+                out.add(Channel(o.getString("n"), o.getString("u"), o.optString("l", "")))
             }
         } catch (e: Exception) {
         }
@@ -57,7 +58,7 @@ class Store(private val ctx: Context) {
                 val ia = o.getJSONArray("items")
                 for (j in 0 until ia.length()) {
                     val c = ia.getJSONObject(j)
-                    items.add(Channel(c.getString("n"), c.getString("u")))
+                    items.add(Channel(c.getString("n"), c.getString("u"), c.optString("l", "")))
                 }
                 out.add(Playlist(o.getString("name"), items))
             }
@@ -113,13 +114,17 @@ class Store(private val ctx: Context) {
 fun parseM3u(text: String): List<Channel> {
     val out = ArrayList<Channel>()
     var name: String? = null
+    var logo = ""
+    val logoRe = Regex("tvg-logo=\"([^\"]*)\"")
     for (raw in text.lines()) {
         val line = raw.trim()
         if (line.startsWith("#EXTINF")) {
             name = line.substringAfterLast(",").trim()
+            logo = logoRe.find(line)?.groupValues?.get(1) ?: ""
         } else if (line.isNotEmpty() && !line.startsWith("#") && name != null) {
-            out.add(Channel(name, line))
+            out.add(Channel(name, line, logo))
             name = null
+            logo = ""
         }
     }
     return out
@@ -133,7 +138,9 @@ fun parseRadio(text: String): List<Channel> {
             val o = arr.getJSONObject(i)
             val n = o.optString("name").trim()
             val u = o.optString("url_resolved").trim()
-            if (n.isNotEmpty() && u.isNotEmpty()) out.add(Channel(n, u))
+            var l = o.optString("favicon").trim()
+            if (!l.startsWith("http")) l = ""
+            if (n.isNotEmpty() && u.isNotEmpty()) out.add(Channel(n, u, l))
         }
     } catch (e: Exception) {
     }
