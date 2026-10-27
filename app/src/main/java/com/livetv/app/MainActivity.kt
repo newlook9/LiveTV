@@ -6,8 +6,16 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Build
@@ -16,6 +24,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.GestureDetector
 import android.view.Gravity
@@ -25,11 +34,10 @@ import android.view.OrientationEventListener
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.AdapterView
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,6 +58,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
 import org.json.JSONArray
 
 class MainActivity : AppCompatActivity() {
@@ -63,10 +72,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoBox: FrameLayout
     private lateinit var bar: LinearLayout
     private lateinit var panel: LinearLayout
-    private lateinit var spRow: LinearLayout
+    private lateinit var pickRow: LinearLayout
+    private lateinit var title: TextView
     private lateinit var status: TextView
-    private lateinit var modeSpinner: Spinner
-    private lateinit var itemSpinner: Spinner
     private lateinit var search: EditText
     private lateinit var tabViews: List<TextView>
     private lateinit var btnFav: TextView
@@ -75,16 +83,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnFull: TextView
     private lateinit var btnTheme: TextView
     private lateinit var btnAction: TextView
-    private lateinit var modeAdapter: ThemedAdapter
+    private lateinit var btnMode: TextView
+    private lateinit var btnItem: TextView
     private lateinit var orient: OrientationEventListener
-    private var itemAdapter: ThemedAdapter? = null
 
     private val adapter = ChAdapter()
+    private val iconCache = HashMap<String, Drawable>()
     private var isTv = false
     private var tvFull = false
     private var tab = 0
     private var mode = 0
-    private var themeIdx = 0
+    private var curIdx = 0
+    private var themeIdx = 1
     private var qIdx = 0
     private var retries = 0
     private var currentKey = ""
@@ -143,7 +153,7 @@ class MainActivity : AppCompatActivity() {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
 
         store = Store(this)
-        themeIdx = store.getInt("theme", 0)
+        themeIdx = store.getInt("theme", 1)
         qIdx = store.getInt("q", 0)
         mode = store.getInt("mode", 0)
         favs = store.getList("fav")
@@ -159,7 +169,6 @@ class MainActivity : AppCompatActivity() {
         setupOrientation()
         setupBack()
         setQuality(qIdx)
-        modeSpinner.setSelection(mode)
         loadCountriesFromNet()
         selectTab(0)
 
@@ -169,15 +178,82 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- chhote helper ----------
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun focusBg(): StateListDrawable {
-        val bg = StateListDrawable()
-        bg.addState(intArrayOf(android.R.attr.state_focused), ColorDrawable(0x553B82F6))
-        bg.addState(intArrayOf(android.R.attr.state_pressed), ColorDrawable(0x333B82F6))
-        bg.addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
-        return bg
+    private fun withAlpha(c: Int, a: Int): Int = (c and 0x00FFFFFF) or (a shl 24)
+
+    private fun rr(color: Int, radiusDp: Int, strokeColor: Int = 0, strokeDp: Int = 0): GradientDrawable {
+        val g = GradientDrawable()
+        g.shape = GradientDrawable.RECTANGLE
+        g.cornerRadius = dp(radiusDp).toFloat()
+        g.setColor(color)
+        if (strokeDp > 0) g.setStroke(dp(strokeDp), strokeColor)
+        return g
     }
+
+    private fun gradBg(c1: Int, c2: Int, radiusDp: Int): GradientDrawable {
+        val g = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(c1, c2))
+        g.cornerRadius = dp(radiusDp).toFloat()
+        return g
+    }
+
+    private fun stateBg(normal: Drawable, radiusDp: Int): StateListDrawable {
+        val t = Themes.get(themeIdx)
+        val sl = StateListDrawable()
+        sl.addState(
+            intArrayOf(android.R.attr.state_focused),
+            rr(withAlpha(t.accent, 0x55), radiusDp, t.accent, 3)
+        )
+        sl.addState(
+            intArrayOf(android.R.attr.state_pressed),
+            rr(withAlpha(t.accent, 0x77), radiusDp, t.accent, 2)
+        )
+        sl.addState(intArrayOf(), normal)
+        return sl
+    }
+
+    private fun lp(
+        w: Int, h: Int, wt: Float = 0f,
+        l: Int = 0, t: Int = 0, r: Int = 0, b: Int = 0
+    ): LinearLayout.LayoutParams {
+        val p = LinearLayout.LayoutParams(w, h, wt)
+        p.setMargins(dp(l), dp(t), dp(r), dp(b))
+        return p
+    }
+
+    private fun letterIcon(name: String): Drawable {
+        val colors = intArrayOf(
+            0xFF3B82F6.toInt(), 0xFF8B5CF6.toInt(), 0xFF10B981.toInt(),
+            0xFFF59E0B.toInt(), 0xFFEF4444.toInt(), 0xFF06B6D4.toInt()
+        )
+        val ci = (name.hashCode() and 0x7fffffff) % colors.size
+        val letter = name.trim().firstOrNull { it.isLetterOrDigit() }
+            ?.uppercaseChar()?.toString() ?: "TV"
+        val key = "$letter$ci"
+        iconCache[key]?.let { return it }
+        val size = dp(44)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = colors[ci]
+        c.drawRoundRect(
+            RectF(0f, 0f, size.toFloat(), size.toFloat()),
+            dp(10).toFloat(), dp(10).toFloat(), p
+        )
+        p.color = Color.WHITE
+        p.textSize = size * 0.5f
+        p.textAlign = Paint.Align.CENTER
+        p.isFakeBoldText = true
+        val y = size / 2f - (p.descent() + p.ascent()) / 2f
+        c.drawText(letter, size / 2f, y, p)
+        val d = BitmapDrawable(resources, bmp)
+        iconCache[key] = d
+        return d
+    }
+
+    // ---------- player ----------
 
     private fun createPlayer() {
         val loadControl = DefaultLoadControl.Builder()
@@ -219,6 +295,8 @@ class MainActivity : AppCompatActivity() {
         status.text = s
     }
 
+    // ---------- UI ----------
+
     private fun mkBtn(label: String, onClick: () -> Unit): TextView {
         val b = TextView(this)
         b.text = label
@@ -227,8 +305,11 @@ class MainActivity : AppCompatActivity() {
         b.setPadding(dp(4), dp(12), dp(4), dp(12))
         b.isFocusable = true
         b.isClickable = true
-        b.background = focusBg()
         b.setOnClickListener { onClick() }
+        b.setOnFocusChangeListener { v, has ->
+            val s = if (has) 1.06f else 1f
+            v.animate().scaleX(s).scaleY(s).setDuration(120).start()
+        }
         return b
     }
 
@@ -267,61 +348,76 @@ class MainActivity : AppCompatActivity() {
         btnTheme = mkBtn("Theme") { showTheme() }
         bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
+        bar.setPadding(dp(4), dp(2), dp(4), dp(2))
         for (b in listOf(btnFav, btnRec, btnQ, btnFull, btnTheme)) {
-            bar.addView(b, LinearLayout.LayoutParams(0, wrap, 1f))
+            bar.addView(b, lp(0, wrap, 1f, 2, 2, 2, 2))
         }
 
         left.addView(videoBox)
-        left.addView(bar, LinearLayout.LayoutParams(match, wrap))
+        left.addView(bar, lp(match, wrap, 0f, 8, 8, 8, 4))
 
+        // header
+        val logoIv = ImageView(this)
+        logoIv.setImageResource(R.drawable.ic_launcher)
+        title = TextView(this)
+        title.text = "Live TV"
+        title.textSize = 20f
+        title.setTypeface(null, Typeface.BOLD)
         status = TextView(this)
-        status.textSize = 14f
-        status.setPadding(dp(12), dp(8), dp(12), dp(4))
+        status.textSize = 12f
+        status.maxLines = 1
+        status.ellipsize = TextUtils.TruncateAt.END
+        val tcol = LinearLayout(this)
+        tcol.orientation = LinearLayout.VERTICAL
+        tcol.addView(title)
+        tcol.addView(status)
+        val header = LinearLayout(this)
+        header.orientation = LinearLayout.HORIZONTAL
+        header.gravity = Gravity.CENTER_VERTICAL
+        header.setPadding(dp(12), dp(8), dp(12), dp(4))
+        header.addView(logoIv, lp(dp(40), dp(40), 0f, 0, 0, 10, 0))
+        header.addView(tcol, lp(0, wrap, 1f))
 
         val labels = listOf("TV", "Radio", "Fav", "Files", "Lists")
         tabViews = labels.mapIndexed { i, s -> mkBtn(s) { selectTab(i) } }
         val tabs = LinearLayout(this)
         tabs.orientation = LinearLayout.HORIZONTAL
-        for (t in tabViews) tabs.addView(t, LinearLayout.LayoutParams(0, wrap, 1f))
+        for (t in tabViews) tabs.addView(t, lp(0, wrap, 1f, 3, 0, 3, 0))
 
         btnAction = mkBtn("") { onAction() }
         btnAction.textSize = 14f
         btnAction.visibility = View.GONE
 
-        modeAdapter = ThemedAdapter(this, listOf("Mulk (Country)", "Category / Tag"))
-        modeSpinner = Spinner(this)
-        modeSpinner.adapter = modeAdapter
-        modeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+        btnMode = mkBtn("") {
+            showPicker("Chunein", listOf("Mulk (Country)", "Category / Tag"), mode) { pos ->
                 mode = pos
                 store.putInt("mode", pos)
-                if (tab <= 1) setItemsForMode()
+                setItemsForMode()
             }
-
-            override fun onNothingSelected(p: AdapterView<*>?) {}
         }
-
-        itemSpinner = Spinner(this)
-        itemSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                if (tab > 1 || pos >= curItems.size) return
-                val item = curItems[pos]
-                store.putString("sel${tab}_$mode", item.key)
-                loadList(item)
-            }
-
-            override fun onNothingSelected(p: AdapterView<*>?) {}
+        btnItem = mkBtn("") {
+            showPicker(
+                if (mode == 0) "Mulk chunein" else "Category chunein",
+                curItems.map { it.label }, curIdx
+            ) { pos -> selectItem(pos) }
         }
-
-        spRow = LinearLayout(this)
-        spRow.orientation = LinearLayout.HORIZONTAL
-        spRow.addView(modeSpinner, LinearLayout.LayoutParams(0, wrap, 1f))
-        spRow.addView(itemSpinner, LinearLayout.LayoutParams(0, wrap, 1f))
+        for (b in listOf(btnMode, btnItem)) {
+            b.gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            b.setPadding(dp(14), dp(12), dp(14), dp(12))
+            b.maxLines = 1
+            b.ellipsize = TextUtils.TruncateAt.END
+            b.textSize = 14f
+        }
+        pickRow = LinearLayout(this)
+        pickRow.orientation = LinearLayout.HORIZONTAL
+        pickRow.addView(btnMode, lp(0, wrap, 1f, 0, 0, 4, 0))
+        pickRow.addView(btnItem, lp(0, wrap, 1.4f, 4, 0, 0, 0))
 
         search = EditText(this)
         search.hint = "Search / تلاش"
         search.setSingleLine(true)
         search.textSize = 15f
+        search.setPadding(dp(14), dp(10), dp(14), dp(10))
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -333,15 +429,17 @@ class MainActivity : AppCompatActivity() {
         val list = RecyclerView(this)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
+        list.clipToPadding = false
+        list.setPadding(0, 0, 0, dp(8))
 
         panel = LinearLayout(this)
         panel.orientation = LinearLayout.VERTICAL
-        panel.addView(status)
-        panel.addView(tabs)
-        panel.addView(btnAction)
-        panel.addView(spRow)
-        panel.addView(search)
-        panel.addView(list, LinearLayout.LayoutParams(match, 0, 1f))
+        panel.addView(header)
+        panel.addView(tabs, lp(match, wrap, 0f, 8, 4, 8, 4))
+        panel.addView(btnAction, lp(match, wrap, 0f, 8, 2, 8, 4))
+        panel.addView(pickRow, lp(match, wrap, 0f, 8, 2, 8, 4))
+        panel.addView(search, lp(match, wrap, 0f, 8, 2, 8, 4))
+        panel.addView(list, lp(match, 0, 1f))
 
         root.addView(left)
         root.addView(panel)
@@ -352,37 +450,56 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyTheme() {
         val t = Themes.get(themeIdx)
-        root.setBackgroundColor(t.bg)
-        panel.setBackgroundColor(t.bg)
-        bar.setBackgroundColor(t.bar)
+        root.background = gradBg(t.bg, t.card2, 0)
+        bar.background = gradBg(t.card, t.card2, 16)
+        bar.elevation = dp(6).toFloat()
+        title.setTextColor(t.text)
         status.setTextColor(t.sub)
-        for (b in listOf(btnFav, btnRec, btnQ, btnFull, btnTheme, btnAction)) {
+        for (b in listOf(btnFav, btnRec, btnQ, btnFull, btnTheme)) {
             b.setTextColor(t.text)
+            b.background = stateBg(ColorDrawable(Color.TRANSPARENT), 12)
+        }
+        btnAction.setTextColor(t.accent)
+        btnAction.background =
+            stateBg(rr(withAlpha(t.accent, 0x28), 12, t.accent, 1), 12)
+        for (b in listOf(btnMode, btnItem)) {
+            b.setTextColor(t.text)
+            b.background = stateBg(rr(t.card, 12, withAlpha(t.sub, 0x66), 1), 12)
         }
         search.setTextColor(t.text)
         search.setHintTextColor(t.sub)
-        modeAdapter.theme = t
-        modeAdapter.notifyDataSetChanged()
-        itemAdapter?.theme = t
-        itemAdapter?.notifyDataSetChanged()
-        adapter.theme = t
+        search.background = rr(t.card, 12, withAlpha(t.sub, 0x66), 1)
         adapter.notifyDataSetChanged()
         updateTabs()
     }
 
     private fun updateTabs() {
         val t = Themes.get(themeIdx)
-        val accent = Color.parseColor("#3B82F6")
+        val onAccent = if (themeIdx == 2) Color.BLACK else Color.WHITE
         for (i in tabViews.indices) {
-            tabViews[i].setTextColor(if (i == tab) accent else t.text)
+            val b = tabViews[i]
+            if (i == tab) {
+                b.setTextColor(onAccent)
+                b.background = stateBg(rr(t.accent, 12), 12)
+            } else {
+                b.setTextColor(t.text)
+                b.background = stateBg(ColorDrawable(Color.TRANSPARENT), 12)
+            }
         }
     }
 
     private fun updateRows() {
-        spRow.visibility = if (tab <= 1) View.VISIBLE else View.GONE
+        pickRow.visibility = if (tab <= 1) View.VISIBLE else View.GONE
         val showAction = tab == 3 || (tab == 4 && openPlaylist == null)
         btnAction.visibility = if (showAction) View.VISIBLE else View.GONE
         btnAction.text = if (tab == 3) "+ Gallery se files chunein" else "+ Nayi Playlist"
+    }
+
+    private fun updatePickerLabels() {
+        btnMode.text = (if (mode == 0) "Mulk" else if (tab == 0) "Category" else "Tag") + "  ▾"
+        if (curIdx in curItems.indices) {
+            btnItem.text = curItems[curIdx].label + "  ▾"
+        }
     }
 
     private fun applyLayout() {
@@ -511,6 +628,73 @@ class MainActivity : AppCompatActivity() {
         play(items[next])
     }
 
+    // ---------- picker (dropdown ki jagah) ----------
+
+    private fun showPicker(
+        titleText: String,
+        labels: List<String>,
+        selected: Int,
+        onPick: (Int) -> Unit
+    ) {
+        val t = Themes.get(themeIdx)
+        var dlg: AlertDialog? = null
+        val rv = RecyclerView(this)
+        val lm = LinearLayoutManager(this)
+        rv.layoutManager = lm
+        rv.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+            override fun onCreateViewHolder(
+                parent: ViewGroup, viewType: Int
+            ): RecyclerView.ViewHolder {
+                val tv = TextView(parent.context)
+                val p = RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                p.setMargins(dp(8), dp(3), dp(8), dp(3))
+                tv.layoutParams = p
+                tv.setPadding(dp(14), dp(12), dp(14), dp(12))
+                tv.textSize = 16f
+                tv.isFocusable = true
+                tv.isClickable = true
+                return object : RecyclerView.ViewHolder(tv) {}
+            }
+
+            override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
+                val tv = h.itemView as TextView
+                val sel = pos == selected
+                tv.text = (if (sel) "✓  " else "     ") + labels[pos]
+                tv.setTextColor(if (sel) t.accent else t.text)
+                tv.background = stateBg(rr(t.card, 12), 12)
+                tv.setOnClickListener {
+                    dlg?.dismiss()
+                    onPick(pos)
+                }
+            }
+
+            override fun getItemCount(): Int = labels.size
+        }
+        val head = TextView(this)
+        head.text = titleText
+        head.textSize = 18f
+        head.setTypeface(null, Typeface.BOLD)
+        head.setTextColor(t.text)
+        head.setPadding(dp(18), dp(16), dp(18), dp(8))
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.addView(head)
+        box.addView(rv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(360)))
+        val d = AlertDialog.Builder(this).setView(box).create()
+        dlg = d
+        d.window?.setBackgroundDrawable(rr(t.bg, 16))
+        d.show()
+        rv.post {
+            lm.scrollToPositionWithOffset(selected, dp(120))
+            rv.post { rv.findViewHolderForAdapterPosition(selected)?.itemView?.requestFocus() }
+        }
+    }
+
+    // ---------- tabs aur lists ----------
+
     private fun selectTab(t: Int) {
         tab = t
         openPlaylist = null
@@ -527,7 +711,8 @@ class MainActivity : AppCompatActivity() {
         updateRows()
         refreshList()
     }
-private fun setItemsForMode() {
+
+    private fun setItemsForMode() {
         curItems = if (mode == 0) {
             countryItems
         } else if (tab == 0) {
@@ -535,13 +720,20 @@ private fun setItemsForMode() {
         } else {
             RData.tags
         }
-        val a = ThemedAdapter(this, curItems.map { it.label })
-        a.theme = Themes.get(themeIdx)
-        itemAdapter = a
-        itemSpinner.adapter = a
         val saved = store.getString("sel${tab}_$mode", if (mode == 0) "pk" else "news")
         val idx = curItems.indexOfFirst { it.key == saved }
-        itemSpinner.setSelection(if (idx < 0) 0 else idx)
+        curIdx = if (idx < 0) 0 else idx
+        updatePickerLabels()
+        loadList(curItems[curIdx])
+    }
+
+    private fun selectItem(pos: Int) {
+        if (pos !in curItems.indices) return
+        curIdx = pos
+        val item = curItems[pos]
+        store.putString("sel${tab}_$mode", item.key)
+        updatePickerLabels()
+        loadList(item)
     }
 
     private fun parseAny(key: String, text: String): List<Channel> =
@@ -694,6 +886,7 @@ private fun setItemsForMode() {
         player.prepare()
         player.playWhenReady = true
         updateFavBtn()
+        adapter.notifyDataSetChanged()
     }
 
     private fun updateFavBtn() {
@@ -790,6 +983,8 @@ private fun setItemsForMode() {
             .show()
     }
 
+    // ---------- recording ----------
+
     private fun toggleRecord() {
         val r = rec
         if (r != null && r.active) {
@@ -884,33 +1079,88 @@ private fun setItemsForMode() {
         player.release()
     }
 
+    // ---------- list adapter ----------
+
     inner class ChAdapter : RecyclerView.Adapter<ChAdapter.VH>() {
         var items: List<Channel> = emptyList()
-        var theme: AppTheme = Themes.get(0)
 
-        inner class VH(val tv: TextView) : RecyclerView.ViewHolder(tv)
+        inner class VH(
+            val row: LinearLayout,
+            val logo: ImageView,
+            val name: TextView,
+            val heart: TextView
+        ) : RecyclerView.ViewHolder(row)
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val tv = TextView(parent.context)
-            tv.layoutParams = RecyclerView.LayoutParams(
+            val ctx = parent.context
+            val row = LinearLayout(ctx)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            val p = RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            tv.setPadding(dp(16), dp(14), dp(16), dp(14))
+            p.setMargins(dp(8), dp(4), dp(8), dp(4))
+            row.layoutParams = p
+            row.setPadding(dp(10), dp(8), dp(12), dp(8))
+            row.isFocusable = true
+            row.isClickable = true
+
+            val iv = ImageView(ctx)
+            iv.scaleType = ImageView.ScaleType.FIT_CENTER
+            iv.setPadding(dp(2), dp(2), dp(2), dp(2))
+            row.addView(iv, LinearLayout.LayoutParams(dp(46), dp(46)))
+
+            val tv = TextView(ctx)
             tv.textSize = 16f
-            tv.isFocusable = true
-            tv.isClickable = true
-            tv.background = focusBg()
-            return VH(tv)
+            tv.maxLines = 2
+            tv.ellipsize = TextUtils.TruncateAt.END
+            val tp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            tp.setMargins(dp(12), 0, dp(8), 0)
+            row.addView(tv, tp)
+
+            val heart = TextView(ctx)
+            heart.text = "♥"
+            heart.textSize = 16f
+            row.addView(
+                heart,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            return VH(row, iv, tv, heart)
         }
 
         override fun onBindViewHolder(h: VH, position: Int) {
+            val t = Themes.get(themeIdx)
             val ch = items[position]
             val fav = favs.any { it.url == ch.url }
-            h.tv.text = if (fav) "♥  " + ch.name else ch.name
-            h.tv.setTextColor(theme.text)
-            h.tv.setOnClickListener { onItemClick(ch) }
-            h.tv.setOnLongClickListener {
+            val playing = ch.url == nowPlaying?.url
+
+            h.row.background = stateBg(rr(t.card, 14), 14)
+            h.name.text = ch.name
+            h.name.setTextColor(if (playing) t.accent else t.text)
+            h.name.setTypeface(null, if (playing) Typeface.BOLD else Typeface.NORMAL)
+            h.heart.setTextColor(t.accent)
+            h.heart.visibility = if (fav) View.VISIBLE else View.GONE
+            h.logo.background = rr(withAlpha(t.sub, 0x22), 10)
+
+            val icon = letterIcon(ch.name)
+            if (ch.logo.isNotEmpty()) {
+                Glide.with(h.logo)
+                    .load(ch.logo)
+                    .placeholder(icon)
+                    .error(icon)
+                    .override(132, 132)
+                    .into(h.logo)
+            } else {
+                Glide.with(h.logo).clear(h.logo)
+                h.logo.setImageDrawable(icon)
+            }
+
+            h.row.setOnClickListener { onItemClick(ch) }
+            h.row.setOnLongClickListener {
                 showItemMenu(ch)
                 true
             }
