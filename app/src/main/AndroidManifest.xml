@@ -14,6 +14,8 @@
         android:required="false" />
 
     <application
+        android:icon="@drawable/ic_launcher"
+        android:banner="@drawable/banner"
         android:label="Live TV"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
