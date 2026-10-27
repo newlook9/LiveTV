@@ -3,9 +3,18 @@ package com.livetv.app
 import android.content.ContentValues
 import android.content.Context
 import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
+import androidx.media3.common.MediaItem
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -38,14 +47,22 @@ class Recorder(private val ctx: Context, private val onDone: (String) -> Unit) {
         bytes = 0
         running = true
         Thread {
-            val msg = try {
+            var ok = true
+            try {
                 FileOutputStream(f).use { out -> record(url, out) }
-                finish(f)
             } catch (e: Exception) {
-                if (bytes > 0) finish(f) else "ریکارڈنگ نہیں ہو سکی (چینل محفوظ یا بند ہو سکتا ہے)"
+                ok = bytes > 0
             }
             running = false
-            onDone(msg)
+            if (!ok || !f.exists() || f.length() == 0L) {
+                f.delete()
+                onDone("ریکارڈنگ خالی رہی، یہ چینل ریکارڈ نہیں ہو سکتا")
+            } else if (isRadio) {
+                onDone(publish(f, "audio/mpeg", true))
+            } else {
+                onDone("MP4 بن رہی ہے، انتظار کریں...")
+                toMp4(f)
+            }
         }.start()
     }
 
@@ -58,6 +75,45 @@ class Recorder(private val ctx: Context, private val onDone: (String) -> Unit) {
             } catch (e: Exception) {
             }
         }.start()
+    }
+
+    private fun toMp4(f: File) {
+        val mp4 = File(f.parentFile, f.nameWithoutExtension + ".mp4")
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val t = Transformer.Builder(ctx)
+                    .addListener(object : Transformer.Listener {
+                        override fun onCompleted(
+                            composition: Composition,
+                            exportResult: ExportResult
+                        ) {
+                            Thread {
+                                val msg = publish(mp4, "video/mp4", false)
+                                f.delete()
+                                onDone(msg)
+                            }.start()
+                        }
+
+                        override fun onError(
+                            composition: Composition,
+                            exportResult: ExportResult,
+                            exportException: ExportException
+                        ) {
+                            mp4.delete()
+                            Thread {
+                                onDone("MP4 نہیں بن سکی۔ " + publish(f, "video/mp2t", false))
+                            }.start()
+                        }
+                    })
+                    .build()
+                val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(f))).build()
+                t.start(item, mp4.absolutePath)
+            } catch (e: Exception) {
+                Thread {
+                    onDone("MP4 نہیں بن سکی۔ " + publish(f, "video/mp2t", false))
+                }.start()
+            }
+        }
     }
 
     private fun open(u: String): HttpURLConnection {
@@ -157,19 +213,16 @@ class Recorder(private val ctx: Context, private val onDone: (String) -> Unit) {
         return resolve(base, pick)
     }
 
-    private fun finish(f: File): String {
-        if (!f.exists() || f.length() == 0L) {
-            return "ریکارڈنگ خالی رہی، یہ چینل ریکارڈ نہیں ہو سکتا"
-        }
+    private fun publish(f: File, mime: String, radio: Boolean): String {
+        if (!f.exists() || f.length() == 0L) return "ریکارڈنگ خالی رہی"
         return try {
-            val mime = if (isRadio) "audio/mpeg" else "video/mp2t"
-            val folder = if (isRadio) Environment.DIRECTORY_MUSIC else Environment.DIRECTORY_MOVIES
+            val folder = if (radio) Environment.DIRECTORY_MUSIC else Environment.DIRECTORY_MOVIES
             if (Build.VERSION.SDK_INT >= 29) {
                 val v = ContentValues()
                 v.put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
                 v.put(MediaStore.MediaColumns.MIME_TYPE, mime)
                 v.put(MediaStore.MediaColumns.RELATIVE_PATH, "$folder/LiveTV")
-                val coll = if (isRadio) {
+                val coll = if (radio) {
                     MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 } else {
                     MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -180,7 +233,7 @@ class Recorder(private val ctx: Context, private val onDone: (String) -> Unit) {
                     f.inputStream().use { it.copyTo(o) }
                 }
                 f.delete()
-                "محفوظ ہو گئی: $folder/LiveTV"
+                "محفوظ ہو گئی: $folder/LiveTV (گیلری میں دیکھیں)"
             } else {
                 val pub = File(Environment.getExternalStoragePublicDirectory(folder), "LiveTV")
                 pub.mkdirs()
@@ -188,7 +241,7 @@ class Recorder(private val ctx: Context, private val onDone: (String) -> Unit) {
                 f.copyTo(dest, true)
                 f.delete()
                 MediaScannerConnection.scanFile(ctx, arrayOf(dest.absolutePath), null, null)
-                "محفوظ ہو گئی: $folder/LiveTV"
+                "محفوظ ہو گئی: $folder/LiveTV (گیلری میں دیکھیں)"
             }
         } catch (e: Exception) {
             "فائل ایپ فولڈر میں ہے: ${f.absolutePath}"
