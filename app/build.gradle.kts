@@ -11,8 +11,8 @@ android {
         applicationId = "com.livetv.app"
         minSdk = 21
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 4
+        versionName = "4.0"
     }
 
     compileOptions {
