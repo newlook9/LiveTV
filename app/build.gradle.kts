@@ -11,8 +11,8 @@ android {
         applicationId = "com.livetv.app"
         minSdk = 21
         targetSdk = 34
-        versionCode = 4
-        versionName = "4.0"
+        versionCode = 5
+        versionName = "5.0"
     }
 
     compileOptions {
@@ -33,4 +33,5 @@ dependencies {
     implementation("androidx.media3:media3-datasource:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-transformer:1.3.1")
+    implementation("com.github.bumptech.glide:glide:4.16.0")
 }
