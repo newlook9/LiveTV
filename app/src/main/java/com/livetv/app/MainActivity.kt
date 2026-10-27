@@ -527,8 +527,7 @@ class MainActivity : AppCompatActivity() {
         updateRows()
         refreshList()
     }
-
-    private fun setItemsForMode() {
+private fun setItemsForMode() {
         curItems = if (mode == 0) {
             countryItems
         } else if (tab == 0) {
