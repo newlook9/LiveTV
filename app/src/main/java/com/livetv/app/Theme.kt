@@ -1,54 +1,34 @@
 package com.livetv.app
 
-import android.content.Context
 import android.graphics.Color
-import android.view.View
-import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.TextView
 
-class AppTheme(val bg: Int, val text: Int, val sub: Int, val bar: Int)
+class AppTheme(
+    val bg: Int,
+    val text: Int,
+    val sub: Int,
+    val bar: Int,
+    val card: Int,
+    val card2: Int,
+    val accent: Int
+)
 
 object Themes {
     val names = listOf("Light", "Dark", "AMOLED")
 
+    private fun c(s: String): Int = Color.parseColor(s)
+
     fun get(i: Int): AppTheme = when (i) {
         1 -> AppTheme(
-            Color.parseColor("#1E1E1E"), Color.WHITE,
-            Color.parseColor("#B0B0B0"), Color.parseColor("#2C2C2C")
+            c("#0F172A"), c("#F8FAFC"), c("#94A3B8"), c("#1E293B"),
+            c("#1E293B"), c("#162033"), c("#3B82F6")
         )
         2 -> AppTheme(
-            Color.BLACK, Color.WHITE,
-            Color.parseColor("#9E9E9E"), Color.parseColor("#141414")
+            c("#000000"), c("#FFFFFF"), c("#9CA3AF"), c("#111111"),
+            c("#161616"), c("#0B0B0B"), c("#22D3EE")
         )
         else -> AppTheme(
-            Color.WHITE, Color.BLACK,
-            Color.DKGRAY, Color.parseColor("#EEEEEE")
+            c("#F1F5F9"), c("#0F172A"), c("#475569"), c("#E2E8F0"),
+            c("#FFFFFF"), c("#EEF2F7"), c("#2563EB")
         )
     }
 }
-
-class ThemedAdapter(ctx: Context, items: List<String>) :
-    ArrayAdapter<String>(ctx, android.R.layout.simple_spinner_item, items) {
-
-    var theme: AppTheme = Themes.get(0)
-
-    init {
-        setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-    }
-
-    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val v = super.getView(position, convertView, parent)
-        (v as? TextView)?.setTextColor(theme.text)
-        return v
-    }
-
-    override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val v = super.getDropDownView(position, convertView, parent)
-        (v as? TextView)?.let {
-            it.setTextColor(theme.text)
-            it.setBackgroundColor(theme.bar)
-        }
-        return v
-    }
-    }
